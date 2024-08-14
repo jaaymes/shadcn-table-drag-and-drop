@@ -10,13 +10,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Table,
-  TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
 import { faker } from "@faker-js/faker";
 import {
   ColumnDef,
@@ -34,9 +32,14 @@ import {
   useReactTable,
   type ExpandedState,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronRight, Grip, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import * as React from "react";
-import { DndProvider, useDrag, useDrop } from "react-dnd";
+import {
+  DndProvider,
+  useDrag,
+  useDrop,
+  type DragSourceMonitor,
+} from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 
 type Payment = {
@@ -124,54 +127,62 @@ const columns: ColumnDef<Payment>[] = [
   },
 ];
 
-const DraggableRow: React.FC<{
+type SubRow = {
+  id: string;
+  amount: string;
+  email: string;
+};
+
+type RowData = {
+  id: string;
+  amount: number;
+  email: string;
+  subRows?: SubRow[];
+};
+
+interface DraggableRowProps {
   row: Row<Payment>;
-  isSubRow?: boolean;
-  className?: string;
-  reorderRow: (
-    draggedRowIndex: number,
-    targetRowIndex: number,
-    isSubRow?: boolean
+  index: number;
+  moveRow: (
+    dragIndex: number,
+    hoverIndex: number,
+    sourceParentId?: string,
+    targetParentId?: string
   ) => void;
-}> = ({ row, reorderRow, isSubRow = false }) => {
-  const [, dropRef] = useDrop({
+}
+
+const DraggableRow: React.FC<DraggableRowProps> = ({ row, index, moveRow }) => {
+  const [, drop] = useDrop({
     accept: "row",
-    drop: (draggedRow: Row<Payment>) =>
-      reorderRow(draggedRow.index, row.index, isSubRow),
+    hover: (item: { index: number; parentId?: string }) => {
+      console.log("index", index);
+      if (item.index !== index && item.parentId) {
+        moveRow(item.index, index, item.parentId, row.parentId);
+        item.index = index;
+        item.parentId = row.parentId;
+      }
+    },
   });
 
-  const [{ isDragging }, dragRef, previewRef] = useDrag({
-    collect: (monitor) => ({
+  const [{ isDragging }, drag] = useDrag({
+    type: "row",
+    item: { index, parentId: row.parentId },
+    collect: (monitor: DragSourceMonitor) => ({
       isDragging: monitor.isDragging(),
     }),
-    item: () => ({ ...row, isSubRow }),
-    type: "row",
   });
 
   return (
-    <>
-      <TableRow
-        ref={previewRef}
-        className={cn(
-          "transition-opacity",
-          isDragging ? "opacity-50" : "opacity-100",
-          isSubRow ? "bg-red-200" : ""
-        )}
-      >
-        <TableCell ref={dropRef}>
-          <span ref={dragRef} className="cursor-move">
-            <Grip />
-          </span>
+    <TableRow
+      ref={(node) => drag(drop(node))}
+      style={{ opacity: isDragging ? 0.5 : 1 }}
+    >
+      {row.getVisibleCells().map((cell) => (
+        <TableCell key={cell.id}>
+          {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </TableCell>
-        {row.getVisibleCells().map((cell) => {
-          return (
-            <TableCell key={cell.id}>
-              {flexRender(cell.column.columnDef.cell, cell.getContext())}
-            </TableCell>
-          );
-        })}
-      </TableRow>
-    </>
+      ))}
+    </TableRow>
   );
 };
 
@@ -216,6 +227,7 @@ export default function Home() {
       subRows: faker.helpers.multiple(createRandom, { count: 2 }),
     },
   ]);
+  console.log("🚀 ~ data:", JSON.stringify(data));
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
@@ -242,6 +254,9 @@ export default function Home() {
     getSubRows: (row) => row.subRows,
     enableExpanding: true,
     onExpandedChange: setExpanded,
+    autoResetExpanded: false,
+    autoResetAll: false,
+    autoResetPageIndex: false,
     state: {
       sorting,
       columnFilters,
@@ -251,86 +266,104 @@ export default function Home() {
     },
   });
 
-  const reorderRow = (
-    draggedRowIndex: number,
-    targetRowIndex: number,
-    isSubRow = false
+  const moveRow = (
+    dragIndex: number,
+    hoverIndex: number,
+    sourceParentId?: string,
+    targetParentId?: string
   ) => {
-    if (isSubRow) {
-      console.log("reorder sub row");
-    } else {
-      console.log("reorder row");
+    console.log("🚀 ~ dragIndex: PAI", dragIndex);
+    //
+
+    // console.log("🚀 ~ Home ~ DESTINO: targetParentId", targetParentId);
+    // console.log("🚀 ~ Home ~ ORIGEM: sourceParentId", sourceParentId);
+    // const updatedData = [...data];
+    // const [draggedRow] = updatedData.splice(dragIndex, 1);
+    // updatedData.splice(hoverIndex, 0, draggedRow);
+    // setData(updatedData);
+
+    if (sourceParentId && targetParentId) {
+      let updatedData = [...data];
+      const sourceParent = updatedData[Number(sourceParentId)];
+      if (sourceParent?.subRows) {
+        console.log("🚀 ~ dragIndex: SubRow", dragIndex);
+
+        const [draggedRow] = sourceParent.subRows.splice(dragIndex, 1);
+
+        sourceParent.subRows.splice(hoverIndex, 0, draggedRow);
+        // Atualizar o estado ou a referência
+        updatedData = updatedData.map((row) => {
+          if (row.id === sourceParentId) {
+            return sourceParent;
+          }
+          return row;
+        });
+
+        setData(updatedData);
+
+        // console.log("🚀 ~ sourceParent:", sourceParent);
+        // setData(updatedData);
+
+        return;
+      }
     }
-    data.splice(
-      targetRowIndex,
-      0,
-      data.splice(draggedRowIndex, 1)[0] as Payment
-    );
-    setData([...data]);
+    // if (targetParentId && !sourceParentId) {
+    //   let updatedData = [...data];
+    //   // get targetParent using indexOf targetParentId is index enter table
+    //   const targetParent = updatedData[Number(targetParentId)];
+    //   console.log("🚀 ~ Home ~ targetParent:", targetParent);
+    //   // if (targetParent?.subRows) {
+    //   //   const [draggedRow] = targetParent.subRows.splice(dragIndex, 1);
+    //   //   targetParent.subRows.splice(hoverIndex, 0, draggedRow);
+    //   //   setData(updatedData);
+    //   return;
+    // }
+    if (!targetParentId && !sourceParentId) {
+      const updatedData = [...data];
+      const [draggedRow] = updatedData.splice(dragIndex, 1);
+      console.log("🚀 ~ draggedRow:", draggedRow);
+      updatedData.splice(hoverIndex, 0, draggedRow);
+      console.log("🚀 ~ updatedData:", updatedData);
+
+      setData(updatedData);
+      return;
+    }
   };
+
+  React.useEffect(() => {
+    console.log("🚀 ~ data:", data);
+  }, [data]);
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="px-4 py-4">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                <TableHead></TableHead>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getExpandedRowModel().rows?.length ? (
-              table.getExpandedRowModel().rows.map((row) => {
-                console.log("🚀 ~ table.getExpandedRowModel ~ row:", row);
-                return (
-                  <>
-                    <DraggableRow
-                      key={row.id}
-                      row={row}
-                      reorderRow={reorderRow}
-                    />
-                    {row.getIsExpanded()
-                      ? row.subRows.map((subRow) => {
-                          return (
-                            <DraggableRow
-                              key={`${subRow.id}-sub`}
-                              row={subRow}
-                              isSubRow
-                              reorderRow={reorderRow}
-                            />
-                          );
-                        })
-                      : null}
-                  </>
-                );
-              })
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <TableRow key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <TableHead key={header.id}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext()
+                      )}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <tbody>
+          {table.getRowModel().rows.map((row, index) => (
+            <DraggableRow
+              key={row.id}
+              row={row}
+              index={index}
+              moveRow={moveRow}
+            />
+          ))}
+        </tbody>
+      </Table>
     </DndProvider>
   );
 }
